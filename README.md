@@ -55,6 +55,29 @@ See comments in `.env_example` for each variable.
 - **ipset:** Previous IP is read from `OLD_IP_FILE`. If current IP differs, the script removes the old IP from each set in `IPSET_LISTS`, adds the new IP, runs `ipset save` to `IPSET_CONF`, then writes the new IP to `OLD_IP_FILE`.
 - **nginx:** Config(s) are searched for the line containing `NGINX_ALLOW_MARKER`; the IP in the `allow` directive is replaced. One `nginx -t` and one `systemctl reload nginx` after edits. On error, changed files are restored from backup.
 
+## Publishing this repo (GitHub / GitLab)
+
+The project is already a git repo with an initial commit. To publish it as a **public** repository:
+
+**GitHub:**
+1. Create a new repository on [github.com](https://github.com/new) (do not add README or .gitignore).
+2. Add the remote and push:
+   ```bash
+   git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
+   git branch -M main
+   git push -u origin main
+   ```
+3. In repository Settings → General → Danger Zone, visibility is Public by default for new repos.
+
+**GitLab:**
+1. Create a new project on [gitlab.com](https://gitlab.com/projects/new) (visibility: Public, empty repo).
+2. Add the remote and push:
+   ```bash
+   git remote add origin https://gitlab.com/YOUR_USERNAME/YOUR_REPO.git
+   git branch -M main
+   git push -u origin main
+   ```
+
 ## License
 
 Use as you like. No warranty.
