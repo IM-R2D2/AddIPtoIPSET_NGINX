@@ -164,10 +164,11 @@ if [ "$MODE" = "dir" ]; then
 
 else
   # Single file mode
-  CURRENT_IP=$(grep -F "$MARKER" "$nginx_conf" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | sort -u | head -n1)
+  # Важно: при отсутствии маркера или при неизменившемся IP — только тихий выход, без лога и без Telegram.
+  CURRENT_IP=$(grep -F "$MARKER" "$nginx_conf" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | sort -u | head -n1)
 
   if [ -z "$CURRENT_IP" ]; then
-    # Marker not found in config — exit without report
+    # Маркер в конфиге отсутствует или в строке нет IP — выходим молча (ни лог, ни Telegram)
     exit 0
   fi
 
