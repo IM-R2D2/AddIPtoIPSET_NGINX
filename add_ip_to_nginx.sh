@@ -1,4 +1,5 @@
 #!/bin/bash
+# VER: 2026-03 — при отсутствии маркера/неизменённом IP не шлём в Telegram
 set -u
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
