@@ -111,14 +111,28 @@ chmod 600 "$SCRIPT_DIR/.env" 2>/dev/null || true
 # Root crontab: scripts need root (ipset, nginx)
 CRON1="*/5 * * * * $INSTALL_DIR/add_ip_to_ipset.sh"
 CRON2="*/5 * * * * $INSTALL_DIR/add_ip_to_nginx.sh"
-NEW_LINES="$CRON1
-$CRON2"
-CURRENT=$(sudo crontab -l 2>/dev/null) || true
-if echo "$CURRENT" | grep -qF "$INSTALL_DIR/add_ip_to_ipset.sh"; then
-  echo "  cron   уже в crontab root (каждые 5 мин)"
+CURRENT="$(sudo crontab -l 2>/dev/null || true)"
+
+lines_to_add=()
+if printf '%s\n' "$CURRENT" | grep -Fxq "$CRON1"; then
+  echo "  cron   есть: $CRON1"
 else
-  (echo "$CURRENT"; echo "$NEW_LINES") | sudo crontab -
-  echo "  cron   добавлен в crontab root, каждые 5 мин"
+  lines_to_add+=("$CRON1")
+fi
+if printf '%s\n' "$CURRENT" | grep -Fxq "$CRON2"; then
+  echo "  cron   есть: $CRON2"
+else
+  lines_to_add+=("$CRON2")
+fi
+
+if [ "${#lines_to_add[@]}" -eq 0 ]; then
+  echo "  cron   уже настроен (ничего не добавлял)"
+else
+  {
+    [ -n "$CURRENT" ] && printf '%s\n' "$CURRENT"
+    printf '%s\n' "${lines_to_add[@]}"
+  } | sudo crontab -
+  echo "  cron   добавлено строк: ${#lines_to_add[@]}"
 fi
 
 echo "  ─────────────────────────────"

@@ -23,7 +23,7 @@ Scripts for servers with a **dynamic IP** that must be allowed in firewall (ipse
    ./deploy.sh
    # if you use ipset: sudo ./deploy.sh
    ```
-   Deploy copies scripts and `.env` into `/usr/local/bin/addip-to-ipset_nginx` with **owner root**. Cron runs as **root** (ipset and nginx need root). Root crontab gets:
+   Deploy copies scripts and `.env` into `/usr/local/bin/addip-to-ipset_nginx` with **owner root**. Cron runs as **root** (ipset and nginx need root). Повторный deploy не дублирует cron (добавляет только отсутствующие строки). Root crontab gets:
    - `*/5 * * * * /usr/local/bin/addip-to-ipset_nginx/add_ip_to_ipset.sh`
    - `*/5 * * * * /usr/local/bin/addip-to-ipset_nginx/add_ip_to_nginx.sh`  
    To edit `.env` after install: `sudo nano /usr/local/bin/addip-to-ipset_nginx/.env`
