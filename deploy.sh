@@ -22,22 +22,41 @@ echo "  ────────────────────────
 
 # Collect unique directories from paths in .env
 dirs_to_create=()
+log_dirs=()
 for var in IPSET_LOGFILE OLD_IP_FILE IPSET_CONF NGINX_LOGFILE nginx_conf TGBOT; do
   val="${!var:-}"
   [ -z "$val" ] && continue
   dir="$(dirname "$val")"
   dirs_to_create+=("$dir")
+  case "$var" in
+    IPSET_LOGFILE|NGINX_LOGFILE) log_dirs+=("$dir") ;;
+  esac
 done
 
 created_dirs=0
 for dir in $(printf '%s\n' "${dirs_to_create[@]}" | sort -u); do
   if [ ! -d "$dir" ]; then
-    mkdir -p "$dir" || { echo "Ошибка создания $dir" >&2; exit 1; }
+    if [ ! -w "$(dirname "$dir")" ] 2>/dev/null; then
+      sudo mkdir -p "$dir" || { echo "Ошибка создания $dir" >&2; exit 1; }
+    else
+      mkdir -p "$dir" || { echo "Ошибка создания $dir" >&2; exit 1; }
+    fi
     echo "  dir    $dir"
     created_dirs=$((created_dirs + 1))
   fi
 done
 [ "$created_dirs" -eq 0 ] && [ ${#dirs_to_create[@]} -gt 0 ] && echo "  dir    все каталоги на месте"
+
+# Log dirs: owner = current user, chmod 755 (cron user can write log files)
+for dir in $(printf '%s\n' "${log_dirs[@]}" | sort -u); do
+  [ -d "$dir" ] || continue
+  if [ -w "$dir" ]; then
+    chmod 755 "$dir" 2>/dev/null || true
+  else
+    sudo chown "$USER:$(id -gn)" "$dir" 2>/dev/null
+    sudo chmod 755 "$dir" 2>/dev/null || true
+  fi
+done
 
 if ! command -v ipset &>/dev/null; then
   echo ""; echo "Ошибка: ipset не найден (apt install ipset / yum install ipset)." >&2
