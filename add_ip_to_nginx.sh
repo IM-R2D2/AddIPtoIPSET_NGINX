@@ -17,6 +17,16 @@ if [ -z "${ENV_LOADED:-}" ]; then
 fi
 
 LOGFILE="$NGINX_LOGFILE"
+
+# Make relative paths from script dir if not absolute
+case "$LOGFILE" in
+  /*) ;;
+  *) LOGFILE="$SCRIPT_DIR/$LOGFILE" ;;
+esac
+case "${nginx_conf:-}" in
+  /*|"") ;;
+  *) nginx_conf="$SCRIPT_DIR/$nginx_conf" ;;
+esac
 # Mode: directory (all configs) or single file
 if [ -n "${NGINX_SITES_AVAILABLE:-}" ]; then
   MODE="dir"
@@ -92,24 +102,36 @@ if [ "$MODE" = "dir" ]; then
   modified_files=()
   modified_backups=()
   need_update=false
+  configs_with_marker=0
   for f in "$NGINX_DIR"/*; do
     [ -f "$f" ] || continue
     [ -w "$f" ] || continue
-    grep -qF "$MARKER" "$f" 2>/dev/null || continue
+    # Config does not contain marker at all — skip silently
+    if ! grep -qF "$MARKER" "$f" 2>/dev/null; then
+      continue
+    fi
+    configs_with_marker=$((configs_with_marker + 1))
     temp_backup=$(mktemp)
     cp "$f" "$temp_backup"
     ret=0; update_one_file "$f" || ret=$?
     if [ "$ret" -eq 0 ]; then
+      # IP was updated in this config
       modified_files+=("$f")
       modified_backups+=("$temp_backup")
       need_update=true
     else
+      # Either IP already equals NEW_IP or IP не найден рядом с маркером — просто выходим без шума
       rm -f "$temp_backup"
     fi
   done
 
+  # Нет ни одного конфига с таким маркером — "пропускаем ход" без логов и уведомлений
+  if [ "${configs_with_marker:-0}" -eq 0 ]; then
+    exit 0
+  fi
+
+  # Маркеры есть, но во всех конфигах IP уже равен NEW_IP — тоже ничего не делаем
   if [ "$need_update" = false ]; then
-    echo "$(date): IP не изменился или нет конфигов с маркером [$MARKER]. Обновление не требуется." >> "$LOGFILE"
     exit 0
   fi
 
@@ -145,14 +167,12 @@ else
   CURRENT_IP=$(grep -F "$MARKER" "$nginx_conf" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | sort -u | head -n1)
 
   if [ -z "$CURRENT_IP" ]; then
-    message="$(date): [$host] ERROR! Не найдена строка с маркером [$MARKER] в $nginx_conf"
-    echo "$message" >> "$LOGFILE"
-    $TGBOT "$message"
-    exit 1
+    # Marker not found in config — exit without report
+    exit 0
   fi
 
   if [ "$NEW_IP" = "$CURRENT_IP" ]; then
-    echo "$(date): IP не изменился ($CURRENT_IP). Обновление не требуется." >> "$LOGFILE"
+    # Маркер и IP уже корректны — выходим тихо, без логов и уведомлений
     exit 0
   fi
 

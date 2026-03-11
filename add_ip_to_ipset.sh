@@ -21,6 +21,20 @@ fi
 LOGFILE="$IPSET_LOGFILE"
 read -ra IPSET_LISTS <<< "$IPSET_LISTS"
 
+# Normalize paths to be relative to script directory if they are not absolute
+case "$LOGFILE" in
+  /*) ;;
+  *) LOGFILE="$SCRIPT_DIR/$LOGFILE" ;;
+esac
+case "${OLD_IP_FILE:-}" in
+  /*|"") ;;
+  *) OLD_IP_FILE="$SCRIPT_DIR/$OLD_IP_FILE" ;;
+esac
+case "${IPSET_CONF:-}" in
+  /*|"") ;;
+  *) IPSET_CONF="$SCRIPT_DIR/$IPSET_CONF" ;;
+esac
+
 for var in DNS_RECORD host LOGFILE TGBOT OLD_IP_FILE IPSET_CONF; do
   [ -z "${!var}" ] && echo "Ошибка: в .env не задано: $var" >&2 && exit 1
 done
