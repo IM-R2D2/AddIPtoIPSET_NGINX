@@ -18,20 +18,21 @@ Scripts for servers with a **dynamic IP** that must be allowed in firewall (ipse
    cp .env_example .env
    # edit .env: DNS_RECORD, paths, TG_TOKEN/TG_CHAT_ID if using Telegram
    ```
-3. Run deploy (creates dirs, ipset sets if needed, **installs to `/usr/local/bin/addip-to-ipset_nginx`**, sets `.env` to `chmod 600`, **adds cron every 5 min**):
+3. Run deploy (creates dirs, ipset sets if needed, **installs to `/usr/local/bin/addip-to-ipset_nginx`** for root, **adds cron to root** every 5 min):
    ```bash
    ./deploy.sh
    # if you use ipset: sudo ./deploy.sh
    ```
-   Deploy copies `add_ip_to_ipset.sh`, `add_ip_to_nginx.sh`, `send_tg.sh` and `.env` into `/usr/local/bin/addip-to-ipset_nginx` (owner: current user), restricts `.env` to current user and root, and adds two crontab entries for the current user:
+   Deploy copies scripts and `.env` into `/usr/local/bin/addip-to-ipset_nginx` with **owner root**. Cron runs as **root** (ipset and nginx need root). Root crontab gets:
    - `*/5 * * * * /usr/local/bin/addip-to-ipset_nginx/add_ip_to_ipset.sh`
-   - `*/5 * * * * /usr/local/bin/addip-to-ipset_nginx/add_ip_to_nginx.sh`
+   - `*/5 * * * * /usr/local/bin/addip-to-ipset_nginx/add_ip_to_nginx.sh`  
+   To edit `.env` after install: `sudo nano /usr/local/bin/addip-to-ipset_nginx/.env`
 
 ## Scripts
 
 | Script | Purpose |
 |--------|--------|
-| **deploy.sh** | One-time setup: create dirs from `.env`, check ipset and create sets, **install scripts + `.env` to `/usr/local/bin/addip-to-ipset_nginx`** (owner: current user), **chmod 600 on `.env`**, **add cron every 5 min** for both scripts. |
+| **deploy.sh** | One-time setup: create dirs from `.env`, check ipset and create sets, **install to `/usr/local/bin/addip-to-ipset_nginx` as root**, **add root cron every 5 min** for both scripts (ipset and nginx require root). |
 | **add_ip_to_ipset.sh** | Resolve `DNS_RECORD` → IP; if IP changed, update ipset sets (remove old IP, add new), save config, notify Telegram. State: `OLD_IP_FILE`. |
 | **add_ip_to_nginx.sh** | Resolve `DNS_RECORD` → IP; find lines with `NGINX_ALLOW_MARKER` (e.g. `allow 1.2.3.4; # SYSADMIN`), replace IP if changed, `nginx -t` and `systemctl reload nginx`, notify Telegram. Can work on one file or all configs in `NGINX_SITES_AVAILABLE`. |
 | **send_tg.sh** | Sends one argument as a message to Telegram using `TG_TOKEN` and `TG_CHAT_ID` from `.env`. Used by the other scripts for alerts. |

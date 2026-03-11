@@ -47,13 +47,12 @@ for dir in $(printf '%s\n' "${dirs_to_create[@]}" | sort -u); do
 done
 [ "$created_dirs" -eq 0 ] && [ ${#dirs_to_create[@]} -gt 0 ] && echo "  dir    все каталоги на месте"
 
-# Log dirs: owner = current user, chmod 755 (cron user can write log files)
+# Log dirs: scripts run as root, so root must own/write; chmod 755
 for dir in $(printf '%s\n' "${log_dirs[@]}" | sort -u); do
   [ -d "$dir" ] || continue
   if [ -w "$dir" ]; then
     chmod 755 "$dir" 2>/dev/null || true
   else
-    sudo chown "$USER:$(id -gn)" "$dir" 2>/dev/null
     sudo chmod 755 "$dir" 2>/dev/null || true
   fi
 done
@@ -91,69 +90,38 @@ if [ -n "${IPSET_LISTS:-}" ]; then
   fi
 fi
 
-echo "  install $INSTALL_DIR"
-if [ ! -w "$(dirname "$INSTALL_DIR")" ] 2>/dev/null; then
-  NEED_SUDO=1
-else
-  NEED_SUDO=0
-fi
-
-if [ "$NEED_SUDO" -eq 1 ]; then
-  sudo mkdir -p "$INSTALL_DIR" || { echo "Ошибка создания $INSTALL_DIR" >&2; exit 1; }
-  sudo chown "$USER:$(id -gn)" "$INSTALL_DIR"
-else
-  mkdir -p "$INSTALL_DIR" || { echo "Ошибка создания $INSTALL_DIR" >&2; exit 1; }
-fi
-
+echo "  install $INSTALL_DIR (от root)"
+# Install for root: ipset and nginx require root
+sudo mkdir -p "$INSTALL_DIR" || { echo "Ошибка создания $INSTALL_DIR" >&2; exit 1; }
 for f in add_ip_to_ipset.sh add_ip_to_nginx.sh send_tg.sh .env; do
   if [ ! -f "$SCRIPT_DIR/$f" ]; then
     continue
   fi
-  if [ "$NEED_SUDO" -eq 1 ]; then
-    sudo cp "$SCRIPT_DIR/$f" "$INSTALL_DIR/$f"
-    sudo chown "$USER:$(id -gn)" "$INSTALL_DIR/$f"
-  else
-    cp "$SCRIPT_DIR/$f" "$INSTALL_DIR/$f"
-  fi
+  sudo cp "$SCRIPT_DIR/$f" "$INSTALL_DIR/$f"
   echo "  copy   $f"
 done
-
+sudo chown -R root:root "$INSTALL_DIR"
+sudo chmod 600 "$INSTALL_DIR/.env"
+sudo chmod +x "$INSTALL_DIR"/add_ip_to_ipset.sh "$INSTALL_DIR"/add_ip_to_nginx.sh "$INSTALL_DIR"/send_tg.sh
+if [ -f "$INSTALL_DIR/send_tg.sh" ] && command -v sed &>/dev/null; then
+  sudo sed -i "s|^TGBOT=.*|TGBOT=$INSTALL_DIR/send_tg.sh|" "$INSTALL_DIR/.env"
+fi
 chmod 600 "$SCRIPT_DIR/.env" 2>/dev/null || true
 
-if [ -f "$INSTALL_DIR/.env" ]; then
-  if [ "$NEED_SUDO" -eq 1 ]; then
-    sudo chmod 600 "$INSTALL_DIR/.env"
-  else
-    chmod 600 "$INSTALL_DIR/.env"
-  fi
-  if [ -f "$INSTALL_DIR/send_tg.sh" ] && command -v sed &>/dev/null; then
-    if [ "$NEED_SUDO" -eq 1 ]; then
-      sudo sed -i "s|^TGBOT=.*|TGBOT=$INSTALL_DIR/send_tg.sh|" "$INSTALL_DIR/.env"
-    else
-      sed -i "s|^TGBOT=.*|TGBOT=$INSTALL_DIR/send_tg.sh|" "$INSTALL_DIR/.env"
-    fi
-  fi
-fi
-
-for f in add_ip_to_ipset.sh add_ip_to_nginx.sh send_tg.sh; do
-  if [ -f "$INSTALL_DIR/$f" ]; then
-    [ "$NEED_SUDO" -eq 1 ] && sudo chmod +x "$INSTALL_DIR/$f" || chmod +x "$INSTALL_DIR/$f"
-  fi
-done
-
+# Root crontab: scripts need root (ipset, nginx)
 CRON1="*/5 * * * * $INSTALL_DIR/add_ip_to_ipset.sh"
 CRON2="*/5 * * * * $INSTALL_DIR/add_ip_to_nginx.sh"
 NEW_LINES="$CRON1
 $CRON2"
-CURRENT=$(crontab -l 2>/dev/null) || true
+CURRENT=$(sudo crontab -l 2>/dev/null) || true
 if echo "$CURRENT" | grep -qF "$INSTALL_DIR/add_ip_to_ipset.sh"; then
-  echo "  cron   уже добавлен (каждые 5 мин)"
+  echo "  cron   уже в crontab root (каждые 5 мин)"
 else
-  (echo "$CURRENT"; echo "$NEW_LINES") | crontab -
-  echo "  cron   добавлен, каждые 5 мин"
+  (echo "$CURRENT"; echo "$NEW_LINES") | sudo crontab -
+  echo "  cron   добавлен в crontab root, каждые 5 мин"
 fi
 
 echo "  ─────────────────────────────"
-echo "  Скрипты: $INSTALL_DIR"
-echo "  .env: chmod 600 (владелец/root)"
+echo "  Скрипты: $INSTALL_DIR (владелец root)"
+echo "  Запуск: от root (cron). Редактировать .env: sudo nano $INSTALL_DIR/.env"
 echo ""
