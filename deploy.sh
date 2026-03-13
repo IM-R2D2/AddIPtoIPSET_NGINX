@@ -23,7 +23,7 @@ echo "  ────────────────────────
 # Collect unique directories from paths in .env
 dirs_to_create=()
 log_dirs=()
-for var in IPSET_LOGFILE OLD_IP_FILE IPSET_CONF NGINX_LOGFILE nginx_conf TGBOT; do
+for var in IPSET_LOGFILE OLD_IP_FILE IPSET_CONF NGINX_LOGFILE NGINX_IP_ALLOW_DIR nginx_conf TGBOT; do
   val="${!var:-}"
   [ -z "$val" ] && continue
   dir="$(dirname "$val")"
