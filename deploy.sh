@@ -57,6 +57,44 @@ for dir in $(printf '%s\n' "${log_dirs[@]}" | sort -u); do
   fi
 done
 
+# Ensure at least one *.conf in NGINX_IP_ALLOW_DIR (from .env)
+if [ -n "${NGINX_IP_ALLOW_DIR:-}" ] && [ -d "$NGINX_IP_ALLOW_DIR" ]; then
+  shopt -s nullglob
+  conf_files=("$NGINX_IP_ALLOW_DIR"/*.conf)
+  shopt -u nullglob
+  if [ ${#conf_files[@]} -eq 0 ]; then
+    echo ""
+    echo "  В каталоге $NGINX_IP_ALLOW_DIR нет ни одного .conf файла."
+    echo "  Без него add_ip_to_nginx.sh не будет обновлять разрешённые IP."
+    echo ""
+    read -r -p "  Создать файл host.conf с вашим IP? (Y/n): " answer
+    answer="${answer:-Y}"
+    if [[ "$answer" =~ ^[YyДд] ]]; then
+      while true; do
+        read -r -p "  Введите IP-адрес: " user_ip
+        if [[ "$user_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+          new_conf="$NGINX_IP_ALLOW_DIR/host.conf"
+          line="allow $user_ip; ${NGINX_ALLOW_MARKER:-#SYSADMIN}"
+          if [ -w "$NGINX_IP_ALLOW_DIR" ]; then
+            echo "$line" > "$new_conf" && echo "  file   $new_conf (создан)" || echo "  Ошибка записи $new_conf" >&2
+          else
+            echo "$line" | sudo tee "$new_conf" >/dev/null && echo "  file   $new_conf (создан)" || echo "  Ошибка записи $new_conf" >&2
+          fi
+          break
+        else
+          echo "  Неверный формат IP. Введите четыре октета, например: 1.2.3.4" >&2
+        fi
+      done
+    else
+      echo "  Деплой отменён: нужен хотя бы один .conf в $NGINX_IP_ALLOW_DIR"
+      echo "  Добавьте вручную файл со строкой: allow IP; ${NGINX_ALLOW_MARKER:-#SYSADMIN}"
+      echo "  Затем запустите deploy снова." >&2
+      exit 1
+    fi
+    echo ""
+  fi
+fi
+
 if ! command -v ipset &>/dev/null; then
   echo ""; echo "Ошибка: ipset не найден (apt install ipset / yum install ipset)." >&2
   exit 1
@@ -93,7 +131,7 @@ fi
 echo "  install $INSTALL_DIR (от root)"
 # Install for root: ipset and nginx require root
 sudo mkdir -p "$INSTALL_DIR" || { echo "Ошибка создания $INSTALL_DIR" >&2; exit 1; }
-for f in add_ip_to_ipset.sh add_ip_to_nginx.sh send_tg.sh .env; do
+for f in common.sh add_ip_to_ipset.sh add_ip_to_nginx.sh send_tg.sh .env; do
   if [ ! -f "$SCRIPT_DIR/$f" ]; then
     continue
   fi

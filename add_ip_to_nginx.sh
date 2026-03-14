@@ -1,25 +1,15 @@
 #!/bin/bash
-# VER: 2026-03 — поиск и замена IP в файлах include (ip-allow); при отсутствии маркера/неизменённом IP — тихий выход
+# Update allow IP in include files by marker; silent exit if unchanged or no marker
 set -u
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ENV_LOADED=
-for env in "$SCRIPT_DIR/.env" ".env"; do
-  if [ -f "$env" ]; then
-    set -a && source "$env" && set +a
-    ENV_LOADED=1
-    break
-  fi
-done
-if [ -z "${ENV_LOADED:-}" ]; then
-  echo "Ошибка: файл .env не найден. Создайте .env из .env_example." >&2
-  exit 1
-fi
+source "$SCRIPT_DIR/common.sh"
+load_env
 
-# Директория с include-файлами (например /etc/nginx/ip-allow); в каждом — строка allow IP; #MARKER
+# Include dir (e.g. /etc/nginx/ip-allow); files contain "allow IP; #MARKER"
 INCLUDE_DIR="${NGINX_IP_ALLOW_DIR:-${NGINX_SITES_AVAILABLE:-}}"
-for var in DNS_RECORD host LOGFILE TGBOT NGINX_ALLOW_MARKER; do
+for var in DNS_RECORD host NGINX_LOGFILE TGBOT NGINX_ALLOW_MARKER; do
   [ -z "${!var}" ] && echo "Ошибка: в .env не задано: $var" >&2 && exit 1
 done
 [ -z "$INCLUDE_DIR" ] && echo "Ошибка: в .env задайте NGINX_IP_ALLOW_DIR (директория с include-файлами)." >&2 && exit 1
@@ -39,32 +29,51 @@ esac
 mkdir -p "$(dirname "$LOGFILE")"
 
 if [ ! -d "$INCLUDE_DIR" ]; then
-  echo "$(date): Ошибка: Директория include $INCLUDE_DIR не существует" >> "$LOGFILE"
+  log_to "$LOGFILE" "Ошибка: Директория include $INCLUDE_DIR не существует"
   exit 1
 fi
 if [ ! -r "$INCLUDE_DIR" ] || [ ! -w "$INCLUDE_DIR" ]; then
-  echo "$(date): Ошибка: Нет прав на чтение/запись $INCLUDE_DIR" >> "$LOGFILE"
+  log_to "$LOGFILE" "Ошибка: Нет прав на чтение/запись $INCLUDE_DIR"
   exit 1
 fi
 
-send_telegram() {
-  $TGBOT "$1"
-}
-
-# Получаем IP из DNS (не падаем при отсутствии ответа)
-NEW_IP=$(dig +short "$DNS_RECORD" 2>/dev/null | grep -m1 -E '([0-9]{1,3}\.){3}[0-9]{1,3}' || true)
-
-if [ -z "$NEW_IP" ]; then
-  msg="$(date): [$host] ERROR: DNS не вернул IP для $DNS_RECORD"
-  echo "$msg" >> "$LOGFILE"
+if ! get_dns_ips "$DNS_RECORD"; then
+  msg="[$host] ERROR: DNS не вернул ни одного IP для $DNS_RECORD"
+  log_to "$LOGFILE" "$msg"
   send_telegram "$msg"
   exit 1
 fi
 
-if [[ "$NEW_IP" =~ ^127\. ]]; then
-  # Локальный IP — не обновляем конфиг, выходим тихо
-  exit 0
-fi
+# Extract IPs from lines containing MARKER in file
+current_ips_in_file() {
+  local f=$1
+  grep -F "$MARKER" "$f" 2>/dev/null | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' || true
+}
+
+# Replace "allow ... MARKER" block with one allow per NEW_IPS
+rewrite_allow_block() {
+  local f=$1
+  local replaced=false
+  local tmpf
+  tmpf=$(mktemp)
+  while IFS= read -r line; do
+    if [[ "$line" =~ allow[[:space:]].*$MARKER ]]; then
+      if ! $replaced; then
+        for ip in "${NEW_IPS[@]}"; do
+          echo "allow $ip; $MARKER"
+        done
+        replaced=true
+      fi
+      continue
+    fi
+    echo "$line"
+  done < "$f" > "$tmpf"
+  if $replaced; then
+    cat "$tmpf" > "$f"
+  fi
+  rm -f "$tmpf"
+  $replaced
+}
 
 changed_files=()
 changed_backups=()
@@ -76,16 +85,15 @@ for f in "$INCLUDE_DIR"/*; do
   line=$(grep -F "$MARKER" "$f" 2>/dev/null | head -n1)
   [ -z "$line" ] && continue
 
-  CURRENT_IP=$(echo "$line" | grep -oE '([0-9]{1,3}\.){3}[0-9]{1,3}' | head -n1)
-  [ -z "$CURRENT_IP" ] && continue
-
-  if [ "$CURRENT_IP" = "$NEW_IP" ]; then
+  CURRENT_IPS_SORTED=$(current_ips_in_file "$f" | sort)
+  NEW_IPS_SORTED=$(printf '%s\n' "${NEW_IPS[@]}" | sort)
+  if [ "$CURRENT_IPS_SORTED" = "$NEW_IPS_SORTED" ]; then
     continue
   fi
 
   temp_backup=$(mktemp)
   cp "$f" "$temp_backup"
-  if sed -i '\|'"$MARKER"'| s|allow .*|allow '"$NEW_IP"'; '"$MARKER"'|' "$f" 2>/dev/null; then
+  if rewrite_allow_block "$f"; then
     changed_files+=("$f")
     changed_backups+=("$temp_backup")
   else
@@ -93,12 +101,12 @@ for f in "$INCLUDE_DIR"/*; do
   fi
 done
 
-# Ничего не поменялось — тихий выход (ни лог, ни Telegram)
+# No changes: exit silently (no log, no Telegram)
 [ ${#changed_files[@]} -eq 0 ] && exit 0
 
 if ! nginx -t 2>/dev/null; then
   msg="$(date): [$host] ERROR: nginx -t не прошёл после правки"
-  echo "$msg" >> "$LOGFILE"
+  log_to "$LOGFILE" "[$host] ERROR: nginx -t не прошёл после правки"
   send_telegram "$msg"
   for i in "${!changed_files[@]}"; do
     mv "${changed_backups[$i]}" "${changed_files[$i]}"
@@ -108,7 +116,7 @@ fi
 
 if ! systemctl reload nginx 2>/dev/null; then
   msg="$(date): [$host] ERROR: не удалось перезагрузить nginx"
-  echo "$msg" >> "$LOGFILE"
+  log_to "$LOGFILE" "[$host] ERROR: не удалось перезагрузить nginx"
   send_telegram "$msg"
   for i in "${!changed_files[@]}"; do
     mv "${changed_backups[$i]}" "${changed_files[$i]}"
@@ -119,7 +127,7 @@ fi
 for b in "${changed_backups[@]}"; do rm -f "$b"; done
 
 msg="$(date): [$host] IP обновился для $DNS_RECORD
-Новый IP: $NEW_IP
+Список IP: ${NEW_IPS[*]}
 Файлы: ${changed_files[*]}"
-echo "$msg" >> "$LOGFILE"
+log_to "$LOGFILE" "[$host] IP обновился для $DNS_RECORD. Список IP: ${NEW_IPS[*]}. Файлы: ${changed_files[*]}"
 send_telegram "$msg"
