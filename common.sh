@@ -31,7 +31,8 @@ send_telegram() {
   "${TGBOT:-:}" "$1"
 }
 
-# DNS: resolve A records to valid IPv4 (exclude 127.x, validate octets). Sets global NEW_IPS.
+# DNS: resolve A records to valid IPv4 (exclude 127.x, validate octets).
+# Drops any IP listed in DNS_IGNORE_IPS (space-separated). Sets global NEW_IPS.
 get_dns_ips() {
   local record="${1:-}"
   NEW_IPS=()
@@ -47,5 +48,19 @@ get_dns_ips() {
     fi
     NEW_IPS+=("$ip")
   done
+  # Filter out ignored IPs (e.g. CDN/proxy that must not be allowed)
+  if [ -n "${DNS_IGNORE_IPS:-}" ]; then
+    read -ra IGNORE_ARR <<< "$DNS_IGNORE_IPS"
+    local filtered=()
+    local skip
+    for ip in "${NEW_IPS[@]}"; do
+      skip=
+      for ig in "${IGNORE_ARR[@]}"; do
+        [[ "$ip" == "$ig" ]] && { skip=1; break; }
+      done
+      [[ -z "$skip" ]] && filtered+=("$ip")
+    done
+    NEW_IPS=("${filtered[@]}")
+  fi
   [ ${#NEW_IPS[@]} -gt 0 ]
 }
