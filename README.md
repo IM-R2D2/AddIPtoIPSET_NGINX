@@ -1,6 +1,8 @@
 # Dynamic IP → ipset & nginx allow
 
-Scripts for servers with a **dynamic IP** that must be allowed in firewall (ipset) and/or nginx. They resolve the current IP by DNS, compare it with the stored value, and update ipset lists and/or nginx `allow` directives when it changes. Notifications can be sent to Telegram.
+Scripts for servers with a **dynamic IP** that must be allowed in firewall (ipset) and/or nginx. They resolve the current IP(s) by DNS (`dig` on `DNS_RECORD`), compare with stored state, and update ipset lists and/or nginx `allow` directives when the set of IPs changes. Notifications can be sent to Telegram.
+
+**Multiple A records:** If the DNS name returns several IPv4 addresses, all of them are used: ipset gets add/remove for each change; nginx include files get one `allow <IP>;` line per IP.
 
 ## Requirements
 
@@ -18,45 +20,46 @@ Scripts for servers with a **dynamic IP** that must be allowed in firewall (ipse
    cp .env_example .env
    # edit .env: DNS_RECORD, paths, TG_TOKEN/TG_CHAT_ID if using Telegram
    ```
-3. Run deploy (creates dirs, ipset sets if needed, **installs to `/usr/local/bin/addip-to-ipset_nginx`** for root, **adds cron to root** every 5 min):
+3. Run deploy (creates dirs from `.env`, ipset sets if configured, installs scripts to `/usr/local/bin/addip-to-ipset_nginx` as root, adds root cron every 5 min):
    ```bash
    ./deploy.sh
    # if you use ipset: sudo ./deploy.sh
    ```
-   Deploy copies scripts and `.env` into `/usr/local/bin/addip-to-ipset_nginx` with **owner root**. Cron runs as **root** (ipset and nginx need root). Повторный deploy не дублирует cron (добавляет только отсутствующие строки). Root crontab gets:
-   - `*/5 * * * * /usr/local/bin/addip-to-ipset_nginx/add_ip_to_ipset.sh`
-   - `*/5 * * * * /usr/local/bin/addip-to-ipset_nginx/add_ip_to_nginx.sh`  
-   To edit `.env` after install: `sudo nano /usr/local/bin/addip-to-ipset_nginx/.env`
+   - If `NGINX_IP_ALLOW_DIR` has no `*.conf` file, deploy will ask whether to create `host.conf` with an IP you enter; if you decline, deploy exits (add a `.conf` manually and run deploy again).
+   - Deploy copies `common.sh`, `add_ip_to_ipset.sh`, `add_ip_to_nginx.sh`, `send_tg.sh`, and `.env`. Cron entries are added only if missing (no duplicates on re-run).
+   - Root crontab gets:
+     - `*/5 * * * * /usr/local/bin/addip-to-ipset_nginx/add_ip_to_ipset.sh`
+     - `*/5 * * * * /usr/local/bin/addip-to-ipset_nginx/add_ip_to_nginx.sh`
+   - To edit `.env` after install: `sudo nano /usr/local/bin/addip-to-ipset_nginx/.env`
 
 ## Scripts
 
 | Script | Purpose |
 |--------|--------|
-| **deploy.sh** | One-time setup: create dirs from `.env`, check ipset and create sets, **install to `/usr/local/bin/addip-to-ipset_nginx` as root**, **add root cron every 5 min** for both scripts (ipset and nginx require root). |
-| **add_ip_to_ipset.sh** | Resolve `DNS_RECORD` → IP; if IP changed, update ipset sets (remove old IP, add new), save config, notify Telegram. State: `OLD_IP_FILE`. |
-| **add_ip_to_nginx.sh** | Resolve `DNS_RECORD` → IP; find lines with `NGINX_ALLOW_MARKER` (e.g. `allow 1.2.3.4; # SYSADMIN`), replace IP if changed, `nginx -t` and `systemctl reload nginx`, notify Telegram. Can work on one file or all configs in `NGINX_SITES_AVAILABLE`. |
-| **send_tg.sh** | Sends one argument as a message to Telegram using `TG_TOKEN` and `TG_CHAT_ID` from `.env`. Used by the other scripts for alerts. |
+| **common.sh** | Shared library (sourced by both scripts): load `.env`, `log_to`, `send_telegram`, `get_dns_ips` (all A records, valid IPv4, exclude 127.x). |
+| **deploy.sh** | One-time setup: create dirs from `.env`, ensure at least one `*.conf` in `NGINX_IP_ALLOW_DIR` (or prompt to create `host.conf`), check/create ipset sets, install files to `/usr/local/bin/addip-to-ipset_nginx`, add root cron every 5 min. |
+| **add_ip_to_ipset.sh** | Resolve `DNS_RECORD` → all IPs; diff with `OLD_IP_FILE` (one IP per line); remove IPs no longer in DNS from each set in `IPSET_LISTS`, add new IPs, `ipset save` to `IPSET_CONF`, update state file; notify Telegram. |
+| **add_ip_to_nginx.sh** | Resolve `DNS_RECORD` → all IPs; for each `*.conf` in `NGINX_IP_ALLOW_DIR`, find lines with `NGINX_ALLOW_MARKER`, replace the allow block with one `allow <IP>;` per current IP; `nginx -t` and `systemctl reload nginx`; on error, restore backups; notify Telegram. Silent exit if nothing changed. |
+| **send_tg.sh** | Sends one argument as a message to Telegram using `TG_TOKEN` and `TG_CHAT_ID` from `.env`. |
 
 ## Configuration (.env)
 
-All behaviour is driven by `.env` (no defaults in scripts). Use `.env_example` as a template.
+All behaviour is driven by `.env` (use `.env_example` as template). See comments there for each variable.
 
-- **Common:** `DNS_RECORD`, `host`, `TGBOT` (path to `send_tg.sh`).
+- **Common:** `DNS_RECORD`, `host`, `TGBOT` (path to `send_tg.sh`; deploy rewrites to install path).
 - **Telegram:** `TG_TOKEN`, `TG_CHAT_ID`.
 - **ipset:** `IPSET_LOGFILE`, `IPSET_LISTS`, `OLD_IP_FILE`, `IPSET_CONF`.
-- **nginx:** `NGINX_LOGFILE`, `NGINX_ALLOW_MARKER`, and either `NGINX_SITES_AVAILABLE` (directory) or `nginx_conf` (single file).
-
-See comments in `.env_example` for each variable.
+- **nginx:** `NGINX_LOGFILE`, `NGINX_ALLOW_MARKER`, `NGINX_IP_ALLOW_DIR` (directory of include files; each file has lines like `allow IP; #SYSADMIN`).
 
 ## How it works
 
-- **IP source:** `dig +short "$DNS_RECORD"`; result is validated (IPv4, not 127.x).
-- **ipset:** Previous IP is read from `OLD_IP_FILE`. If current IP differs, the script removes the old IP from each set in `IPSET_LISTS`, adds the new IP, runs `ipset save` to `IPSET_CONF`, then writes the new IP to `OLD_IP_FILE`.
-- **nginx:** Config(s) are searched for the line containing `NGINX_ALLOW_MARKER`; the IP in the `allow` directive is replaced. One `nginx -t` and one `systemctl reload nginx` after edits. On error, changed files are restored from backup.
+- **IP source:** `dig +short "$DNS_RECORD"`; all IPv4 A records are collected, validated (octets, exclude 127.x), and stored in array `NEW_IPS`.
+- **ipset:** State file `OLD_IP_FILE` holds one IP per line (previous list). Script computes IPs to remove (in old, not in DNS) and to add (in DNS, not in old). For each set in `IPSET_LISTS`, it runs `ipset del` for removed IPs and `ipset add` for new ones, then `ipset save` and writes the new list to `OLD_IP_FILE`.
+- **nginx:** For each file in `NGINX_IP_ALLOW_DIR`, script extracts IPs from lines containing `NGINX_ALLOW_MARKER`. If that set differs from `NEW_IPS`, it replaces the whole “allow … MARKER” block with one `allow <IP>; MARKER` per IP in `NEW_IPS`. Then `nginx -t`; if OK, `systemctl reload nginx`; on failure, changed files are restored from backup.
 
 ## Publishing this repo (GitHub / GitLab)
 
-The project is already a git repo with an initial commit. To publish it as a **public** repository:
+The project is a git repo. To publish as a **public** repository:
 
 **GitHub:**
 1. Create a new repository on [github.com](https://github.com/new) (do not add README or .gitignore).
