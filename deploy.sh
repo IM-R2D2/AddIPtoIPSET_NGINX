@@ -57,8 +57,16 @@ for dir in $(printf '%s\n' "${log_dirs[@]}" | sort -u); do
   fi
 done
 
-# Ensure at least one *.conf in NGINX_IP_ALLOW_DIR (from .env)
-if [ -n "${NGINX_IP_ALLOW_DIR:-}" ] && [ -d "$NGINX_IP_ALLOW_DIR" ]; then
+# Ensure NGINX_IP_ALLOW_DIR exists and has at least one *.conf (from .env)
+if [ -n "${NGINX_IP_ALLOW_DIR:-}" ]; then
+  if [ ! -d "$NGINX_IP_ALLOW_DIR" ]; then
+    if [ ! -w "$(dirname "$NGINX_IP_ALLOW_DIR")" ] 2>/dev/null; then
+      sudo mkdir -p "$NGINX_IP_ALLOW_DIR" || { echo "Ошибка создания $NGINX_IP_ALLOW_DIR" >&2; exit 1; }
+    else
+      mkdir -p "$NGINX_IP_ALLOW_DIR" || { echo "Ошибка создания $NGINX_IP_ALLOW_DIR" >&2; exit 1; }
+    fi
+    echo "  dir    $NGINX_IP_ALLOW_DIR"
+  fi
   shopt -s nullglob
   conf_files=("$NGINX_IP_ALLOW_DIR"/*.conf)
   shopt -u nullglob
