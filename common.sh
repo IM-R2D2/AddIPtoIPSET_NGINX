@@ -32,13 +32,13 @@ send_telegram() {
 }
 
 # DNS: resolve A records to valid IPv4 (exclude 127.x, validate octets).
-# Drops any IP listed in DNS_IGNORE_IPS (space-separated). Sets global NEW_IPS.
+# Auto-drops nameservers from /etc/resolv.conf and any IP in DNS_IGNORE_IPS. Sets global NEW_IPS.
 get_dns_ips() {
   local record="${1:-}"
   NEW_IPS=()
   [ -z "$record" ] && return 1
   local raw
-  raw=($(dig +short "$record" 2>/dev/null | grep -Eo '([0-9]{1,3}\.){3}[0-9]{1,3}' || true))
+  raw=($(dig +short "$record" 2>/dev/null | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' || true))
   local ip
   for ip in "${raw[@]}"; do
     [[ -z "$ip" ]] && continue
@@ -48,11 +48,19 @@ get_dns_ips() {
     fi
     NEW_IPS+=("$ip")
   done
-  # Filter out ignored IPs (e.g. CDN/proxy that must not be allowed)
+  # Build ignore list: DNS servers from /etc/resolv.conf + DNS_IGNORE_IPS from .env
+  local -a IGNORE_ARR=()
+  local ns
+  while IFS= read -r ns; do
+    IGNORE_ARR+=("$ns")
+  done < <(grep -E '^nameserver[[:space:]]' /etc/resolv.conf 2>/dev/null | awk '{print $2}' | grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$')
   if [ -n "${DNS_IGNORE_IPS:-}" ]; then
-    read -ra IGNORE_ARR <<< "$DNS_IGNORE_IPS"
-    local filtered=()
-    local skip
+    read -ra _extra <<< "$DNS_IGNORE_IPS"
+    IGNORE_ARR+=("${_extra[@]}")
+  fi
+
+  if [ ${#IGNORE_ARR[@]} -gt 0 ]; then
+    local filtered=() skip ip ig
     for ip in "${NEW_IPS[@]}"; do
       skip=
       for ig in "${IGNORE_ARR[@]}"; do
