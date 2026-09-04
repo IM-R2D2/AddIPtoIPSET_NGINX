@@ -59,7 +59,7 @@ check_ip_in_ipset() {
   local ipset_name=$1
   local ip=$2
   check_ipset_name "$ipset_name" || return 1
-  if ipset list "$ipset_name" | grep -qF "$ip"; then
+  if ipset list "$ipset_name" | grep -qxF "$ip"; then
     return 0
   fi
   return 1
